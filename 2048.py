@@ -1,5 +1,7 @@
 import pygame
 import random
+import neat
+import os
 
 pygame.init()
 
@@ -9,7 +11,8 @@ HEIGHT = 500
 screen = pygame.display.set_mode([WIDTH, HEIGHT])
 pygame.display.set_caption('2048')
 timer = pygame.time.Clock()
-fps = 60
+fps = 5
+#fps = 60
 font = pygame.font.Font('freesansbold.ttf', 24)
 
 # 2048 game color library
@@ -179,57 +182,133 @@ def draw_pieces(board):
                 screen.blit(value_text, text_rect)
                 pygame.draw.rect(screen, 'black', [j * 95 + 20, i * 95 + 20, 75, 75], 2, 5)
 
+def reset_game():
+    global board_values
+    global spawn_new
+    global init_count
+    global direction
+    global high_score
+    global score
+    global init_high
+    board_values = [[0 for _ in range(4)] for _ in range(4)]
+    spawn_new = True
+    init_count = 0
+    score = 0
+    direction = ''
+    game_over = False
+
+
+def win() -> bool:
+    for i in range(0, len(board_values)-1):
+        for j in range(0, len(board_values[i])-1):
+            if board_values[i][j] == 2048:
+                return True
+    return False
 
 # main game loop
-run = True
-while run:
-    timer.tick(fps)
-    screen.fill('gray')
-    draw_board()
-    draw_pieces(board_values)
-    if spawn_new or init_count < 2:
-        board_values, game_over = new_pieces(board_values)
-        spawn_new = False
-        init_count += 1
-    if direction != '':
-        board_values = take_turn(direction, board_values)
-        direction = ''
-        spawn_new = True
-    if game_over:
-        draw_over()
-        if high_score > init_high:
-            file = open('high_score', 'w')
-            file.write(f'{high_score}')
-            file.close()
-            init_high = high_score
+def eval_genomes(genomes, config):
+    global board_values
+    global spawn_new
+    global init_count
+    global direction
+    global high_score
+    global score
+    global init_high
+    board_values = [[0 for _ in range(4)] for _ in range(4)]
+    spawn_new = True
+    init_count = 0
+    score = 0
+    direction = ''
+    game_over = False
+    
+    nets = []
+    players = []
+    ge = []
 
-    for event in pygame.event.get():
-        if event.type == pygame.QUIT:
-            run = False
-        if event.type == pygame.KEYUP:
-            if event.key == pygame.K_UP:
+    for genome_id, genome in genomes:
+        genome.fitness = 0  # start with fitness level of 0
+        net = neat.nn.FeedForwardNetwork.create(genome, config)
+        nets.append(net)
+        players.append(genome_id) #not needed in this project.
+        ge.append(genome)
+
+    
+    
+    
+    
+    run = True
+    while run and len(players) > 0:
+        timer.tick(fps)
+        screen.fill('gray')
+        draw_board()
+        draw_pieces(board_values)
+        if spawn_new or init_count < 2:
+            board_values, game_over = new_pieces(board_values)
+            spawn_new = False
+            init_count += 1
+        if direction != '':
+            board_values = take_turn(direction, board_values)
+            direction = ''
+            spawn_new = True
+
+        for x, player in enumerate(players):  
+            values = [x for row in board_values for x in row]
+            output = nets[players.index(player)].activate([int(x) for x in values])
+
+            if output[0] < -0.5:  
                 direction = 'UP'
-            elif event.key == pygame.K_DOWN:
+            elif output[0] < 0.0:
                 direction = 'DOWN'
-            elif event.key == pygame.K_LEFT:
+            elif output[0] < 0.5:
                 direction = 'LEFT'
-            elif event.key == pygame.K_RIGHT:
+            else:
                 direction = 'RIGHT'
 
+            if score > high_score:
+                ge[x].fitness += 10
+                high_score = score
+
+            ge[x].fitness += 1 #fitness determines how far the player makes it.
+
             if game_over:
-                if event.key == pygame.K_RETURN:
-                    board_values = [[0 for _ in range(4)] for _ in range(4)]
-                    spawn_new = True
-                    init_count = 0
-                    score = 0
-                    direction = ''
-                    game_over = False
+                break
 
-    if score > high_score:
-        high_score = score
+        if win():
+            break
+        
+        pygame.display.flip()
+        
+        if game_over:
+            break
 
-    pygame.display.flip()
-pygame.quit()
+    if high_score > init_high:
+        file = open('high_score', 'w')
+        file.write(f'{high_score}')
+        file.close()
+        init_high = high_score
+    
+
+def run(config_file):
+
+    config = neat.config.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                         config_file)
+
+    # Create the population, which is the top-level object for a NEAT run.
+    p = neat.Population(config)
+
+    # Add a stdout reporter to show progress in the terminal.
+    p.add_reporter(neat.StdOutReporter(True))
+    stats = neat.StatisticsReporter()
+    p.add_reporter(stats)
+    p.add_reporter(neat.Checkpointer(5))
+
+    # Run for up to 50 generations.
+    
+    winner = p.run(eval_genomes, 50)
+
+    # show final stats
+    print('\nBest genome:\n{!s}'.format(winner))
 
 if __name__ == '__main__':
     # Determine path to configuration file. This path manipulation is
@@ -238,3 +317,7 @@ if __name__ == '__main__':
     local_dir = os.path.dirname(__file__)
     config_path = os.path.join(local_dir, 'config-feedforward.txt')
     run(config_path)
+
+    file = open('high_score', 'w')
+    file.write(f'{0}')
+    file.close()
